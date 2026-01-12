@@ -1,0 +1,25 @@
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data files (Recommended to ignore large raw data)
+data/raw/
+data/processed/*.csv
+
+# Results
+data/results/*.csv
+data/results/*.txt
+
+# Environment variables
+.env
+
+# Editor settings
+.vscode/
+.idea/
+*.swp
