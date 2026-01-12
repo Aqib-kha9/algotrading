@@ -181,7 +181,7 @@ if menu == "Dashboard Overview":
             height=350
         )
         fig.update_traces(line_color='#00ff9d', fillcolor='rgba(0, 255, 157, 0.1)')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         
         # Recent Activity
         st.markdown("### 🕒 Recent Signals")
@@ -246,7 +246,7 @@ elif menu == "Strategy DNA":
         paper_bgcolor='rgba(0,0,0,0)',
         height=300
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 elif menu == "Performance Analytics":
     st.title("📊 Deep Dive Analytics")
