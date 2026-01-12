@@ -267,9 +267,28 @@ elif menu == "Performance Analytics":
         fig_dist.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig_dist, use_container_width=True)
         
-        # Win Loss Streak
-        st.markdown("### Streak Analysis (Coming Soon)")
-        st.progress(75)
+        # Streak Analysis
+        st.markdown("### 🎲 Streak Analysis")
+        
+        # Calculate streaks
+        df['win'] = df['pnl_pct'] > 0
+        df['streak_id'] = (df['win'] != df['win'].shift()).cumsum()
+        streaks = df.groupby(['streak_id', 'win']).size().reset_index(name='count')
+        
+        max_win_streak = streaks[streaks['win'] == True]['count'].max() if not streaks[streaks['win'] == True].empty else 0
+        max_loss_streak = streaks[streaks['win'] == False]['count'].max() if not streaks[streaks['win'] == False].empty else 0
+        
+        # Current Streak
+        current_streak_val = streaks.iloc[-1]['count']
+        current_type = "Win" if streaks.iloc[-1]['win'] else "Loss"
+        
+        s1, s2, s3 = st.columns(3)
+        with s1:
+            st.metric("Max Win Streak", f"{max_win_streak} Trades", "🚀 Momentum")
+        with s2:
+            st.metric("Max Loss Streak", f"{max_loss_streak} Trades", "⚠️ Risk Check", delta_color="inverse")
+        with s3:
+            st.metric("Current Streak", f"{current_streak_val} {current_type}s")
 
 elif menu == "Exchange Intelligence":
     st.title("⚖️ Exchange Intelligence")
