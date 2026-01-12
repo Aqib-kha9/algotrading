@@ -1,7 +1,6 @@
-ccxt
+streamlit
 pandas
-python-dotenv
-ta-lib
 plotly
-MetaTrader5
+ccxt
+python-dotenv
 xlsxwriter
