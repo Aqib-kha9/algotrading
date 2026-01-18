@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 from datetime import time
+import pytz
 
 class Backtester:
     def __init__(self, data_path, exchange_name='Delta', fee_pct=0.06, spread_pct=0.02):
@@ -16,9 +17,17 @@ class Backtester:
             print(f"Error: Data file {self.data_path} not found.")
             return
             
-        print(f"Loading data from {self.data_path}...")
+        with open('debug_engine.log', 'w') as f:
+            f.write(f"Loading data from: {self.data_path}\n")
+            
         df = pd.read_csv(self.data_path)
-        df['datetime_ist'] = pd.to_datetime(df['datetime_ist'])
+        
+        # Use 'datetime' (UTC) column as source for accuracy
+        # The 'datetime_ist' column in CSV is already shifted but labeled UTC, causing double-shift if converted.
+        df['datetime_ist'] = pd.to_datetime(df['datetime'], utc=True)
+        
+        # Filter for 2026
+
         
         # Strategy State
         session_high = -1.0
@@ -29,37 +38,52 @@ class Backtester:
         
         print(f"Running backtest for {self.exchange_name}...")
         
+        
+        # Main Loop
         for i, row in df.iterrows():
             dt_ist = row['datetime_ist']
+            
+            # Ensure IST
+            if dt_ist.tzinfo is None:
+                 dt_ist = dt_ist.tz_localize('UTC') # Assume UTC if naive
+            
+            dt_ist = dt_ist.tz_convert('Asia/Kolkata')
+            
             row_date = dt_ist.date()
             row_time = dt_ist.time()
             time_val = row_time.hour * 100 + row_time.minute
-            
+
             # Reset daily state at new date
             if row_date != current_date:
                 current_date = row_date
                 session_high = -1.0
                 session_low = 999999999.0
                 daily_trade_taken = False
-                # Optionally close position at end of day, but strategy doesn't specify.
-                # Crypto is 24/7, so we hold.
             
             # 1. Update Session High/Low (8:15 – 9:15 IST)
             if 815 <= time_val <= 915:
                 session_high = max(session_high, row['high']) if session_high != -1.0 else row['high']
                 session_low = min(session_low, row['low'])
             
-            # 2. Manage Active Trade
+            # 2. Check for Time-Based Exit (19:15 IST)
+            if active_position and time_val >= 1915:
+                # Close trade immediately at 19:15 or later
+                self._close_trade(active_position, dt_ist, row['close'], 'TimeExit')
+                self.trades.append(active_position)
+                active_position = None
+                continue
+
+            # 3. Manage Active Trade
             if active_position:
                 self._manage_trade(active_position, row)
                 if active_position['status'] == 'closed':
                     self.trades.append(active_position)
                     active_position = None
                 continue # Skip entry check if in position
-            
-            # 3. Check for New Entry (After 9:15, only one trade per day)
+
+            # 4. Check for New Entry (After 9:15, only one trade per day)
             if not daily_trade_taken and session_high != -1.0 and time_val > 915:
-                buy_trigger = session_high * 1.0005 # +0.05%
+                buy_trigger = session_high * 1.0005
                 sell_trigger = session_low * 0.9995 # -0.05%
                 
                 # Buy Entry
