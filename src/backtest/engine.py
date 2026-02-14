@@ -196,31 +196,20 @@ class Backtester:
         total_pnl_pct = df_trades['pnl_pct'].sum()
         win_rate = (len(df_trades[df_trades['pnl'] > 0]) / len(df_trades)) * 100
         
-        print(f"\nBacktest Results for {self.exchange_name}:")
+        print(f"\nBacktest Results Summary:")
         print(f"Total Trades: {len(df_trades)}")
         print(f"Win Rate: {win_rate:.2f}%")
         print(f"Net PnL (Points): {total_pnl:.2f}")
         print(f"Net PnL (%): {total_pnl_pct:.2f}%")
-
-        print("\nLatest 2026 Trades:")
-        df_2026 = df_trades[df_trades['date'].astype(str).str.startswith('2026')]
-        if not df_2026.empty:
-            print(df_2026[['date', 'type', 'entry_price', 'exit_price', 'reason', 'pnl']].tail(15).to_string(index=False))
         
-        # UI expects specific format
+        # Save results for dashboard
         output_dir = 'data/results'
         os.makedirs(output_dir, exist_ok=True)
         filename = f"{self.exchange_name.lower()}_results.csv"
         path = os.path.join(output_dir, filename)
         
-        try:
-            df_trades.to_csv(path, index=False)
-            print(f"Results saved to {path}")
-        except Exception as e:
-            print(f"Warning: Could not save CSV to {path}. Error: {e}")
-            alt_path = os.path.join(output_dir, f"{self.exchange_name.lower()}_results_alt.csv")
-            df_trades.to_csv(alt_path, index=False)
-            print(f"Saved to alternative path: {alt_path}")
+        df_trades.to_csv(path, index=False)
+        print(f"Results successfully exported to {path}")
 
 if __name__ == "__main__":
     # Exness BTCUSD raw file

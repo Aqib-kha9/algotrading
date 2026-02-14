@@ -1,6 +1,0 @@
-streamlit
-pandas
-plotly
-ccxt
-python-dotenv
-xlsxwriter

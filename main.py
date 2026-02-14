@@ -4,7 +4,7 @@ import sys
 
 def main():
     parser = argparse.ArgumentParser(description="Crypto Algo Trading System")
-    parser.add_argument('mode', choices=['dashboard', 'bot', 'backtest-compare'], help="Mode to run")
+    parser.add_argument('mode', choices=['dashboard', 'bot'], help="Mode to run")
     parser.add_argument('--exchange', default='binance', help="Exchange to use for bot (binance, paper)")
     
     args = parser.parse_args()
@@ -41,10 +41,6 @@ def main():
             
         bot = TradingBot(adapter, config)
         bot.run()
-        
-    elif args.mode == 'backtest-compare':
-        from src.backtest.compare_exchanges import run_comparison
-        run_comparison()
 
 if __name__ == "__main__":
     main()
