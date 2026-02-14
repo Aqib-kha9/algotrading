@@ -19,33 +19,27 @@ def generate_report(results_file, report_file):
     win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
     net_pnl = df['pnl'].sum()
     avg_pnl = df['pnl'].mean()
-    max_drawdown = 0 # Simple calc TODO
-    # Calculate Drawdown
-    # Assuming 'cumulative_pnl' is equity curve percentage based (Log Scaleish)
-    # Proper drawdown needs equity balance. Let's assume starting capital 100.
     
-    equity = [100]
-    peak = 100
+    # Drawdown (based on Cumulative PnL peak)
+    equity = df['cumulative_pnl'].tolist()
+    # Normalize equity to start at 0 or simply track localized drawdowns
+    # Better: Peak = max(cum_pnl so far). DD = Peak - current_cum_pnl
+    
+    peak = -9999999
     drawdowns = []
     
-    for pnl in df['pnl']:
-        # PnL is percentage. New Equity = Old * (1 + pnl/100)
-        new_equity = equity[-1] * (1 + pnl/100)
-        equity.append(new_equity)
-        
-        peak = max(peak, new_equity)
-        dd = (peak - new_equity) / peak * 100
+    for val in equity:
+        peak = max(peak, val)
+        dd = peak - val
         drawdowns.append(dd)
     
     max_dd = max(drawdowns) if drawdowns else 0
-    final_equity = equity[-1]
-    roi = (final_equity - 100)
     
     # Generate Markdown Report
     report_content = f"""# Backtest Performance Report
     
 ## SOW Metrics
-- **Net Profit**: {roi:.2f}% (Compound)
+- **Net Profit (Points)**: {net_pnl:.2f}
 - **Total Trades**: {total_trades}
 - **Win Ratio**: {win_rate:.2f}%
 - **Max Drawdown**: {max_dd:.2f}%

@@ -5,7 +5,7 @@ from datetime import time
 import pytz
 
 class Backtester:
-    def __init__(self, data_path, exchange_name='Delta', fee_pct=0.06, spread_pct=0.02):
+    def __init__(self, data_path, exchange_name='Exness', fee_pct=0.0, spread_pct=0.0):
         self.data_path = data_path
         self.exchange_name = exchange_name
         self.fee_pct = fee_pct / 100 
@@ -17,145 +17,160 @@ class Backtester:
             print(f"Error: Data file {self.data_path} not found.")
             return
             
-        with open('debug_engine.log', 'w') as f:
-            f.write(f"Loading data from: {self.data_path}\n")
-            
-        df = pd.read_csv(self.data_path)
+        print(f"Loading data from: {self.data_path}...")
+        try:
+            df = pd.read_csv(self.data_path, sep='\t')
+        except:
+            df = pd.read_csv(self.data_path)
         
-        # Use 'datetime' (UTC) column as source for accuracy
-        # The 'datetime_ist' column in CSV is already shifted but labeled UTC, causing double-shift if converted.
-        df['datetime_ist'] = pd.to_datetime(df['datetime'], utc=True)
+        # Datetime processing
+        # Exness data is UTC. We work in UTC but align with Terminal Time (UTC+2)
+        df['datetime'] = pd.to_datetime(df['<DATE>'] + ' ' + df['<TIME>'])
+        df.set_index('datetime', inplace=True)
         
-        # Filter for 2026
-
+        # Mid-Price discovery: Client uses Bid + Spread*0.01/2
+        df['high_mid'] = df['<HIGH>'] + (df['<SPREAD>'] * 0.01 / 2)
+        df['low_mid']  = df['<LOW>']  + (df['<SPREAD>'] * 0.01 / 2)
+        df['close_mid'] = df['<CLOSE>'] + (df['<SPREAD>'] * 0.01 / 2)
+        
+        # Strategy Parameters
+        # Verified: Client 02:45-03:55 session is UTC-based
+        RANGE_START_UTC = "02:45" 
+        RANGE_END_UTC   = "03:55" 
+        ENTRY_LIMIT_UTC = "12:30" # 6 PM IST
+        EXIT_TIME_UTC   = "13:40" # 7:15 PM IST
+        
+        BUFF_PERC = 0.0005 # 0.05%
+        TGT_PERC  = 0.0070 # 0.70%
+        SL_PERC   = 0.0030 # 0.30%
+        
+        # TSL Parameters
+        TSL_ACTIVATE_PERC = 0.0040 # 0.40%
+        TSL_TRAIL_COORD   = 0.0020 # 0.20% locked profit level
         
         # Strategy State
-        session_high = -1.0
-        session_low = 999999999.0
         current_date = None
         daily_trade_taken = False
         active_position = None 
         
-        print(f"Running backtest for {self.exchange_name}...")
+        print(f"Running full backtest for {self.exchange_name} (Mid-Price Logic)...")
         
+        unique_dates = sorted(list(set(df.index.date)))
         
-        # Main Loop
-        for i, row in df.iterrows():
-            dt_ist = row['datetime_ist']
+        for row_date in unique_dates:
+            day_data = df[df.index.date == row_date]
+            if day_data.empty: continue
             
-            # Ensure IST
-            if dt_ist.tzinfo is None:
-                 dt_ist = dt_ist.tz_localize('UTC') # Assume UTC if naive
+            # Reset daily state
+            session_high = -1.0
+            session_low = 999999999.0
+            daily_trade_taken = False
             
-            dt_ist = dt_ist.tz_convert('Asia/Kolkata')
+            # 1. Define Session Range 
+            session_mask = (day_data.index.time >= pd.Timestamp(RANGE_START_UTC).time()) & \
+                           (day_data.index.time <= pd.Timestamp(RANGE_END_UTC).time())
+            session_data = day_data[session_mask]
             
-            row_date = dt_ist.date()
-            row_time = dt_ist.time()
-            time_val = row_time.hour * 100 + row_time.minute
-
-            # Reset daily state at new date
-            if row_date != current_date:
-                current_date = row_date
-                session_high = -1.0
-                session_low = 999999999.0
-                daily_trade_taken = False
+            if session_data.empty: continue
             
-            # 1. Update Session High/Low (8:15 – 9:15 IST)
-            if 815 <= time_val <= 915:
-                session_high = max(session_high, row['high']) if session_high != -1.0 else row['high']
-                session_low = min(session_low, row['low'])
+            session_high = session_data['high_mid'].max()
+            session_low  = session_data['low_mid'].min()
             
-            # 2. Check for Time-Based Exit (19:15 IST)
-            if active_position and time_val >= 1915:
-                # Close trade immediately at 19:15 or later
-                self._close_trade(active_position, dt_ist, row['close'], 'TimeExit')
+            buy_trigger = session_high * (1 + BUFF_PERC)
+            sell_trigger = session_low * (1 - BUFF_PERC)
+            
+            # 2. Trade Scanning
+            trade_mask = (day_data.index.time > pd.Timestamp(RANGE_END_UTC).time()) & \
+                         (day_data.index.time <= pd.Timestamp(EXIT_TIME_UTC).time())
+            trade_data = day_data[trade_mask]
+            
+            if trade_data.empty: continue
+            
+            for t_time, row in trade_data.iterrows():
+                # Case A: No active position, look for entry
+                if not active_position:
+                    if daily_trade_taken: continue
+                    if t_time.time() > pd.Timestamp(ENTRY_LIMIT_UTC).time(): continue
+                    
+                    # Check Buy
+                    if row['high_mid'] >= buy_trigger:
+                        entry_price = buy_trigger
+                        active_position = {
+                            'date': row_date,
+                            'type': 'buy',
+                            'entry_time': t_time,
+                            'entry_price': entry_price,
+                            'sl': entry_price * (1 - SL_PERC),
+                            'tp': entry_price * (1 + TGT_PERC),
+                            'status': 'open',
+                            'trailing_active': False
+                        }
+                        daily_trade_taken = True
+                    # Check Sell
+                    elif row['low_mid'] <= sell_trigger:
+                        entry_price = sell_trigger
+                        active_position = {
+                            'date': row_date,
+                            'type': 'sell',
+                            'entry_time': t_time,
+                            'entry_price': entry_price,
+                            'sl': entry_price * (1 + SL_PERC),
+                            'tp': entry_price * (1 - TGT_PERC),
+                            'status': 'open',
+                            'trailing_active': False
+                        }
+                        daily_trade_taken = True
+                
+                # Case B: Manage active position
+                else:
+                    curr_h = row['high_mid']
+                    curr_l = row['low_mid']
+                    
+                    if active_position['type'] == 'buy':
+                        # TSL Activation
+                        if not active_position['trailing_active'] and curr_h >= active_position['entry_price'] * (1 + TSL_ACTIVATE_PERC):
+                            active_position['trailing_active'] = True
+                            active_position['sl'] = active_position['entry_price'] * (1 - TSL_TRAIL_COORD)
+                        
+                        # Stop Loss
+                        if curr_l <= active_position['sl']:
+                            reason = 'TSL HIT' if active_position['trailing_active'] else 'StopLoss'
+                            self._close_trade(active_position, t_time, active_position['sl'], reason)
+                            self.trades.append(active_position)
+                            active_position = None
+                            continue
+                        # Target
+                        if curr_h >= active_position['tp']:
+                            self._close_trade(active_position, t_time, active_position['tp'], 'Target')
+                            self.trades.append(active_position)
+                            active_position = None
+                            continue
+                            
+                    else: # SELL
+                        if not active_position['trailing_active'] and curr_l <= active_position['entry_price'] * (1 - TSL_ACTIVATE_PERC):
+                            active_position['trailing_active'] = True
+                            active_position['sl'] = active_position['entry_price'] * (1 + TSL_TRAIL_COORD)
+                        
+                        if curr_h >= active_position['sl']:
+                            reason = 'TSL HIT' if active_position['trailing_active'] else 'StopLoss'
+                            self._close_trade(active_position, t_time, active_position['sl'], reason)
+                            self.trades.append(active_position)
+                            active_position = None
+                            continue
+                        if curr_l <= active_position['tp']:
+                            self._close_trade(active_position, t_time, active_position['tp'], 'Target')
+                            self.trades.append(active_position)
+                            active_position = None
+                            continue
+            
+            # Close EOD if still open
+            if active_position:
+                last_candle = trade_data.iloc[-1]
+                self._close_trade(active_position, trade_data.index[-1], last_candle['close_mid'], 'TimeExit')
                 self.trades.append(active_position)
                 active_position = None
-                continue
-
-            # 3. Manage Active Trade
-            if active_position:
-                self._manage_trade(active_position, row)
-                if active_position['status'] == 'closed':
-                    self.trades.append(active_position)
-                    active_position = None
-                continue # Skip entry check if in position
-
-            # 4. Check for New Entry (After 9:15, only one trade per day)
-            if not daily_trade_taken and session_high != -1.0 and time_val > 915:
-                buy_trigger = session_high * 1.0005
-                sell_trigger = session_low * 0.9995 # -0.05%
-                
-                # Buy Entry
-                if row['high'] >= buy_trigger:
-                    entry_price = buy_trigger * (1 + self.spread_pct)
-                    sl = entry_price * 0.9970 # -0.30%
-                    tp = entry_price * 1.0070 # +0.70%
-                    
-                    active_position = {
-                        'date': row_date,
-                        'type': 'buy',
-                        'entry_time': dt_ist,
-                        'entry_price': entry_price,
-                        'sl': sl,
-                        'tp': tp,
-                        'status': 'open',
-                        'trailing_active': False
-                    }
-                    daily_trade_taken = True
-                    
-                # Sell Entry
-                elif row['low'] <= sell_trigger:
-                    entry_price = sell_trigger * (1 - self.spread_pct)
-                    sl = entry_price * 1.0030 # +0.30%
-                    tp = entry_price * 0.9930 # -0.70%
-                    
-                    active_position = {
-                        'date': row_date,
-                        'type': 'sell',
-                        'entry_time': dt_ist,
-                        'entry_price': entry_price,
-                        'sl': sl,
-                        'tp': tp,
-                        'status': 'open',
-                        'trailing_active': False
-                    }
-                    daily_trade_taken = True
 
         self._summarize()
-
-    def _manage_trade(self, trade, row):
-        if trade['type'] == 'buy':
-            # Check for Target (High)
-            if row['high'] >= trade['tp']:
-                self._close_trade(trade, row['datetime_ist'], trade['tp'], 'Target')
-                return
-            
-            # Check for Stop Loss (Low)
-            if row['low'] <= trade['sl']:
-                self._close_trade(trade, row['datetime_ist'], trade['sl'], 'StopLoss')
-                return
-            
-            # Trailing Logic: If price moves +0.40%, modify SL to -0.20%
-            if not trade['trailing_active'] and row['high'] >= trade['entry_price'] * 1.0040:
-                trade['sl'] = trade['entry_price'] * 0.9980 # -0.20%
-                trade['trailing_active'] = True
-                
-        else: # Sell
-            # Check for Target (Low)
-            if row['low'] <= trade['tp']:
-                self._close_trade(trade, row['datetime_ist'], trade['tp'], 'Target')
-                return
-            
-            # Check for Stop Loss (High)
-            if row['high'] >= trade['sl']:
-                self._close_trade(trade, row['datetime_ist'], trade['sl'], 'StopLoss')
-                return
-                
-            # Trailing Logic: If price moves -0.40%, modify SL to +0.20%
-            if not trade['trailing_active'] and row['low'] <= trade['entry_price'] * 0.9960:
-                trade['sl'] = trade['entry_price'] * 1.0020 # +0.20%
-                trade['trailing_active'] = True
 
     def _close_trade(self, trade, exit_time, exit_price, reason):
         trade['exit_time'] = exit_time
@@ -163,44 +178,53 @@ class Backtester:
         trade['reason'] = reason
         trade['status'] = 'closed'
         
-        # Calculate PnL (including fees)
+        # PnL logic
         if trade['type'] == 'buy':
-            raw_pnl = (exit_price - trade['entry_price']) / trade['entry_price']
+            trade['pnl'] = exit_price - trade['entry_price']
+            trade['pnl_pct'] = (exit_price / trade['entry_price'] - 1) * 100
         else:
-            raw_pnl = (trade['entry_price'] - exit_price) / trade['entry_price']
+            trade['pnl'] = trade['entry_price'] - exit_price
+            trade['pnl_pct'] = (trade['entry_price'] / exit_price - 1) * 100
             
-        trade['pnl_pct'] = (raw_pnl - (self.fee_pct * 2)) * 100
-
     def _summarize(self):
         df_trades = pd.DataFrame(self.trades)
         if df_trades.empty:
             print("No trades executed.")
             return
             
-        total_pnl = df_trades['pnl_pct'].sum()
-        win_rate = (len(df_trades[df_trades['pnl_pct'] > 0]) / len(df_trades)) * 100
+        total_pnl = df_trades['pnl'].sum()
+        total_pnl_pct = df_trades['pnl_pct'].sum()
+        win_rate = (len(df_trades[df_trades['pnl'] > 0]) / len(df_trades)) * 100
         
         print(f"\nBacktest Results for {self.exchange_name}:")
         print(f"Total Trades: {len(df_trades)}")
         print(f"Win Rate: {win_rate:.2f}%")
-        print(f"Net PnL (%): {total_pnl:.2f}%")
+        print(f"Net PnL (Points): {total_pnl:.2f}")
+        print(f"Net PnL (%): {total_pnl_pct:.2f}%")
+
+        print("\nLatest 2026 Trades:")
+        df_2026 = df_trades[df_trades['date'].astype(str).str.startswith('2026')]
+        if not df_2026.empty:
+            print(df_2026[['date', 'type', 'entry_price', 'exit_price', 'reason', 'pnl']].tail(15).to_string(index=False))
         
-        # Save to csv
+        # UI expects specific format
         output_dir = 'data/results'
         os.makedirs(output_dir, exist_ok=True)
         filename = f"{self.exchange_name.lower()}_results.csv"
-        df_trades.to_csv(os.path.join(output_dir, filename), index=False)
-        print(f"Results saved to {os.path.join(output_dir, filename)}")
+        path = os.path.join(output_dir, filename)
+        
+        try:
+            df_trades.to_csv(path, index=False)
+            print(f"Results saved to {path}")
+        except Exception as e:
+            print(f"Warning: Could not save CSV to {path}. Error: {e}")
+            alt_path = os.path.join(output_dir, f"{self.exchange_name.lower()}_results_alt.csv")
+            df_trades.to_csv(alt_path, index=False)
+            print(f"Saved to alternative path: {alt_path}")
 
 if __name__ == "__main__":
-    # Example runs (assuming prepare_datasets.py finished for Delta)
-    delta_path = r"e:\cyptoalgotrading\data\processed\delta_btcusdt_5m_ist.csv"
-    if os.path.exists(delta_path):
-        bt = Backtester(delta_path, 'Delta')
-        bt.run()
-    
-    exness_path = r"e:\cyptoalgotrading\data\processed\exness_btcusd_5m_ist.csv"
+    # Exness BTCUSD raw file
+    exness_path = "data/raw/BTCUSDm_M5_202001010000_202601121835.csv"
     if os.path.exists(exness_path):
         bt = Backtester(exness_path, 'Exness')
         bt.run()
-

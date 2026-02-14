@@ -205,10 +205,14 @@ elif menu == "Strategy DNA":
             <h3>Core Logic</h3>
             <p>The strategy exploits volatility breakouts following the Asian market opening session.</p>
             <ul>
-                <li><strong>Reference Session (IST):</strong> 08:15 - 09:15</li>
-                <li><strong>Trigger:</strong> Breakout of Session High/Low + 0.05% Buffer</li>
-                <li><strong>Risk Management:</strong> Fixed 1:2.3 Risk-Reward Ratio with Trailing Stop optimization.</li>
-                <li><strong>Frequency:</strong> Max 1 Trade Per Day (Sniper Approach).</li>
+                <li><strong>Asset:</strong> BTCUSD</li>
+                <li><strong>Data Source:</strong> Exness (5M Timeframe)</li>
+                <li><strong>Session Window:</strong> 02:45 - 03:55 UTC</li>
+                <li><strong>Mid-Price Logic:</strong> (Bid + Spread/2)</li>
+                <li><strong>Entry:</strong> 0.05% Buffer on Session High/Low</li>
+                <li><strong>Targets:</strong> TP 0.70% / SL 0.30%</li>
+                <li><strong>Exit:</strong> End of day (13:40 UTC)</li>
+                <li><strong>TSL:</strong> +0.40% activation, +0.20% trailing</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -221,7 +225,7 @@ elif menu == "Strategy DNA":
             <code>Stop Loss: 0.30%</code><br>
             <code>Take Profit: 0.70%</code><br>
             <code>Trailing Start: 0.40%</code><br>
-            <code>Trailing Step: 0.20%</code>
+            <code>Trailing Step: Breakeven/-0.20% (Buy)</code>
         </div>
         """, unsafe_allow_html=True)
         
