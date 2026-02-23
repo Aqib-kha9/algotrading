@@ -5,11 +5,12 @@ from datetime import time
 import pytz
 
 class Backtester:
-    def __init__(self, data_path, exchange_name='Exness', fee_pct=0.0, spread_pct=0.0):
+    def __init__(self, data_path, exchange_name='Exness', fee_pct=0.0, spread_pct=0.0, strategy_version='v1'):
         self.data_path = data_path
         self.exchange_name = exchange_name
         self.fee_pct = fee_pct / 100 
         self.spread_pct = spread_pct / 100
+        self.strategy_version = strategy_version
         self.trades = []
         
     def run(self):
@@ -41,12 +42,18 @@ class Backtester:
         EXIT_TIME_UTC   = "13:40" # 7:15 PM IST
         
         BUFF_PERC = 0.0005 # 0.05%
+        
+        # v1 parameters
         TGT_PERC  = 0.0070 # 0.70%
         SL_PERC   = 0.0030 # 0.30%
-        
-        # TSL Parameters
         TSL_ACTIVATE_PERC = 0.0040 # 0.40%
         TSL_TRAIL_COORD   = 0.0020 # 0.20% locked profit level
+        
+        # v2 parameters
+        TGT_PTS_V2 = 700
+        SL_PTS_V2 = 300
+        TSL_ACTIVATE_PERC_V2 = 0.0040 # 0.40%
+        TSL_TRAIL_PTS_V2 = 200
         
         # Strategy State
         current_date = None
@@ -95,13 +102,16 @@ class Backtester:
                     # Check Buy
                     if row['high_mid'] >= buy_trigger:
                         entry_price = buy_trigger
+                        sl_price = entry_price * (1 - SL_PERC) if self.strategy_version == 'v1' else entry_price - SL_PTS_V2
+                        tp_price = entry_price * (1 + TGT_PERC) if self.strategy_version == 'v1' else entry_price + TGT_PTS_V2
+                        
                         active_position = {
                             'date': row_date,
                             'type': 'buy',
                             'entry_time': t_time,
                             'entry_price': entry_price,
-                            'sl': entry_price * (1 - SL_PERC),
-                            'tp': entry_price * (1 + TGT_PERC),
+                            'sl': sl_price,
+                            'tp': tp_price,
                             'status': 'open',
                             'trailing_active': False
                         }
@@ -109,13 +119,16 @@ class Backtester:
                     # Check Sell
                     elif row['low_mid'] <= sell_trigger:
                         entry_price = sell_trigger
+                        sl_price = entry_price * (1 + SL_PERC) if self.strategy_version == 'v1' else entry_price + SL_PTS_V2
+                        tp_price = entry_price * (1 - TGT_PERC) if self.strategy_version == 'v1' else entry_price - TGT_PTS_V2
+                        
                         active_position = {
                             'date': row_date,
                             'type': 'sell',
                             'entry_time': t_time,
                             'entry_price': entry_price,
-                            'sl': entry_price * (1 + SL_PERC),
-                            'tp': entry_price * (1 - TGT_PERC),
+                            'sl': sl_price,
+                            'tp': tp_price,
                             'status': 'open',
                             'trailing_active': False
                         }
@@ -128,9 +141,15 @@ class Backtester:
                     
                     if active_position['type'] == 'buy':
                         # TSL Activation
-                        if not active_position['trailing_active'] and curr_h >= active_position['entry_price'] * (1 + TSL_ACTIVATE_PERC):
-                            active_position['trailing_active'] = True
-                            active_position['sl'] = active_position['entry_price'] * (1 - TSL_TRAIL_COORD)
+                        if not active_position['trailing_active']:
+                            if self.strategy_version == 'v1':
+                                if curr_h >= active_position['entry_price'] * (1 + TSL_ACTIVATE_PERC):
+                                    active_position['trailing_active'] = True
+                                    active_position['sl'] = active_position['entry_price'] * (1 - TSL_TRAIL_COORD)
+                            else: # v2
+                                if curr_h >= active_position['entry_price'] * (1 + TSL_ACTIVATE_PERC_V2):
+                                    active_position['trailing_active'] = True
+                                    active_position['sl'] = active_position['entry_price'] - TSL_TRAIL_PTS_V2
                         
                         # Stop Loss
                         if curr_l <= active_position['sl']:
@@ -147,9 +166,15 @@ class Backtester:
                             continue
                             
                     else: # SELL
-                        if not active_position['trailing_active'] and curr_l <= active_position['entry_price'] * (1 - TSL_ACTIVATE_PERC):
-                            active_position['trailing_active'] = True
-                            active_position['sl'] = active_position['entry_price'] * (1 + TSL_TRAIL_COORD)
+                        if not active_position['trailing_active']:
+                            if self.strategy_version == 'v1':
+                                if curr_l <= active_position['entry_price'] * (1 - TSL_ACTIVATE_PERC):
+                                    active_position['trailing_active'] = True
+                                    active_position['sl'] = active_position['entry_price'] * (1 + TSL_TRAIL_COORD)
+                            else: # v2
+                                if curr_l <= active_position['entry_price'] * (1 - TSL_ACTIVATE_PERC_V2):
+                                    active_position['trailing_active'] = True
+                                    active_position['sl'] = active_position['entry_price'] + TSL_TRAIL_PTS_V2
                         
                         if curr_h >= active_position['sl']:
                             reason = 'TSL HIT' if active_position['trailing_active'] else 'StopLoss'
@@ -205,7 +230,8 @@ class Backtester:
         # Save results for dashboard
         output_dir = 'data/results'
         os.makedirs(output_dir, exist_ok=True)
-        filename = f"{self.exchange_name.lower()}_results.csv"
+        filename_suffix = "_v2" if self.strategy_version == 'v2' else ""
+        filename = f"{self.exchange_name.lower()}{filename_suffix}_results.csv"
         path = os.path.join(output_dir, filename)
         
         df_trades.to_csv(path, index=False)
@@ -215,5 +241,10 @@ if __name__ == "__main__":
     # Exness BTCUSD raw file
     exness_path = "data/raw/BTCUSDm_M5_202001010000_202601121835.csv"
     if os.path.exists(exness_path):
-        bt = Backtester(exness_path, 'Exness')
-        bt.run()
+        print("Running V1 Backtest...")
+        bt_v1 = Backtester(exness_path, 'Exness', strategy_version='v1')
+        bt_v1.run()
+        print("\n-----------------------\n")
+        print("Running V2 (BTCUSD Abs TGT/SL) Backtest...")
+        bt_v2 = Backtester(exness_path, 'Exness', strategy_version='v2')
+        bt_v2.run()

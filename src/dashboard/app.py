@@ -90,7 +90,10 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 @st.cache_data
 def load_exchange_data(exchange):
-    path = f'data/results/{exchange.lower()}_results.csv'
+    if exchange == "Exness (V2)":
+        path = 'data/results/exness_v2_results.csv'
+    else:
+        path = f'data/results/{exchange.lower()}_results.csv'
     if os.path.exists(path):
         return pd.read_csv(path)
     return pd.DataFrame()
@@ -98,7 +101,7 @@ def load_exchange_data(exchange):
 @st.cache_data
 def load_comp_data():
     comp_data = []
-    for ex in ["Delta", "Exness"]:
+    for ex in ["Delta", "Exness", "Exness (V2)"]:
         df = load_exchange_data(ex)
         if not df.empty:
             net_pnl = df['pnl_pct'].sum()
@@ -133,7 +136,7 @@ menu = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-selected_exchange = st.sidebar.selectbox("Select Exchange Venue", ["Delta", "Exness"])
+selected_exchange = st.sidebar.selectbox("Select Exchange Venue", ["Delta", "Exness", "Exness (V2)"])
 st.sidebar.info(f"Connected: 🟢 {selected_exchange}")
 
 # -----------------------------------------------------------------------------
